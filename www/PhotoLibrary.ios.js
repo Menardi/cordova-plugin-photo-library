@@ -245,22 +245,12 @@ photoLibrary.requestAuthorization = function (success, error, options) {
 
 // url is file url or dataURL
 photoLibrary.saveImage = function (url, album, success, error, options) {
-
-  options = getThumbnailOptionsWithDefaults(options);
-
   if (album.title) {
     album = album.title;
   }
 
   exec(
-    function (libraryItem) {
-      var library = libraryItem ? [libraryItem] : [];
-
-      processLibrary(library, function(library) {
-        success(library[0] || null);
-      }, options);
-
-    },
+    success,
     error,
     'PhotoLibrary',
     'saveImage', [url, album]

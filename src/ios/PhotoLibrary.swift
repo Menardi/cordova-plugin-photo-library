@@ -213,22 +213,59 @@ import Photos
     }
 
     @objc func requestAuthorization(_ command: CDVInvokedUrlCommand) {
+        if #available(iOS 14, *) {
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                switch status {
+                case .authorized, .limited:
+                    let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK)
+                    self.commandDelegate!.send(pluginResult, callbackId: command.callbackId)
+                case .notDetermined, .restricted, .denied:
+                    let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR)
+                    self.commandDelegate!.send(pluginResult, callbackId: command.callbackId)
+                @unknown default:
+                    let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR)
+                    self.commandDelegate!.send(pluginResult, callbackId: command.callbackId)
+                }
+            }
+        } else {
+            let service = PhotoLibraryService.instance
 
-        let service = PhotoLibraryService.instance
+            service.requestAuthorization({
+                let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK)
+                self.commandDelegate!.send(pluginResult, callbackId: command.callbackId    )
+            }, failure: { (err) in
+                let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: err)
+                self.commandDelegate!.send(pluginResult, callbackId: command.callbackId    )
+            })
+        }
+    }
 
-        service.requestAuthorization({
+    var saveImageCallbackId = ""
+
+    @objc func saveError(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeRawPointer) {
+        if error != nil {
+            let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR)
+            self.commandDelegate!.send(pluginResult, callbackId: self.saveImageCallbackId)
+        } else {
             let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK)
-            self.commandDelegate!.send(pluginResult, callbackId: command.callbackId	)
-        }, failure: { (err) in
-            let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: err)
-            self.commandDelegate!.send(pluginResult, callbackId: command.callbackId	)
-        })
-
+            self.commandDelegate!.send(pluginResult, callbackId: self.saveImageCallbackId)
+        }
     }
 
     @objc func saveImage(_ command: CDVInvokedUrlCommand) {
         concurrentQueue.async {
-            if PHPhotoLibrary.authorizationStatus() != .authorized {
+            if #available(iOS 14, *) {
+                let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+
+                switch status {
+                case .authorized, .limited:
+                    break;
+                default:
+                    let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: PhotoLibraryService.PERMISSION_ERROR)
+                    self.commandDelegate!.send(pluginResult, callbackId: command.callbackId)
+                    return
+                }
+            } else if PHPhotoLibrary.authorizationStatus() != .authorized {
                 let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: PhotoLibraryService.PERMISSION_ERROR)
                 self.commandDelegate!.send(pluginResult, callbackId: command.callbackId)
                 return
@@ -239,16 +276,17 @@ import Photos
             let url = command.arguments[0] as! String
             let album = command.arguments[1] as! String
 
-            NSLog("album: %@, %@", album, url);
+            let sourceData: Data
+            do {
+                sourceData = try service.getDataFromURL(url)
+                self.saveImageCallbackId = command.callbackId
 
-            service.saveImage(url, album: album) { (libraryItem: NSDictionary?, error: String?) in
-                if (error != nil) {
-                    let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: error)
-                    self.commandDelegate!.send(pluginResult, callbackId: command.callbackId)
-                } else {
-                    let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: libraryItem as! [String: AnyObject]?)
-                    self.commandDelegate!.send(pluginResult, callbackId: command.callbackId    )
-                }
+                let image = UIImage(data: sourceData)!
+                UIImageWriteToSavedPhotosAlbum(image, self, #selector(self.saveError), nil)
+            } catch {
+                let pluginResult = CDVPluginResult(status: CDVCommandStatus_ERROR)
+                self.commandDelegate!.send(pluginResult, callbackId: command.callbackId)
+                return
             }
         }
     }
